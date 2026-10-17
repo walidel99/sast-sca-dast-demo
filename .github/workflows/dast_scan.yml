@@ -1,0 +1,52 @@
+name: DAST Scan
+
+on:
+  push:
+    branches: [ main ] # Runs on pushes to the main branch
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+
+jobs:
+  dast_checks:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create Docker Network
+        run: docker network create zap-network
+
+      - name: Build Flask Docker image
+        run: docker build -t my-vulnerable-flask-app ./vulnerable_flask_app
+
+      # Run the built container and map a port to the host
+      - name: Run Flask Docker container
+        run: docker run -d --name flask-app-container -p 5000:5000 --network zap-network my-vulnerable-flask-app
+
+      # Wait for the app to start (sleep is simple, a healthcheck loop is better)
+      - name: Wait for app to start
+        run: sleep 10 # Adjust if needed
+
+      # Create a directory for ZAP reports on the runner
+      - name: Create ZAP reports directory
+        run: mkdir ${{ github.workspace }}/zap_reports
+
+      # This grants write permissions to all users, ensuring the container user can write
+      - name: Set ZAP reports directory permissions
+        run: chmod 777 ${{ github.workspace }}/zap_reports
+
+      - name: Run OWASP ZAP Full Scan
+        # Use the full scan script, read more about the command and its flags here: https://www.zaproxy.org/docs/docker/full-scan/#usage
+        run: |
+          docker run -t --network zap-network -v ${{ github.workspace }}/zap_reports:/zap/wrk/:rw ghcr.io/zaproxy/zaproxy:stable zap-full-scan.py -t http://flask-app-container:5000 -I -j -r report.html -J report.json -x report.xml -a    
+
+      # https://github.com/marketplace/actions/upload-a-build-artifact
+      - name: Upload ZAP reports
+        uses: actions/upload-artifact@v4
+        # This step will run even if the previous ZAP scan step fails
+        if: always()
+        with:
+          name: zap-reports
+          # Path on the runner where the reports were written via the volume mount
+          path: ${{ github.workspace }}/zap_reports/
+          retention-days: 5

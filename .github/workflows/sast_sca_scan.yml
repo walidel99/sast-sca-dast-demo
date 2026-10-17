@@ -1,0 +1,50 @@
+name: SAST & SCA Scan
+
+on: 
+  push:
+    branches: [ main ] # Runs on pushes to the main branch
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+
+jobs:
+  # Job ID (can be anything descriptive)
+  sast_sca_checks:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Shallow clones can cause SonarQube to miss changes in files.
+          # Fetch all history for accurate analysis.
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.9'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r vulnerable_flask_app/requirements.txt
+
+      - name: Run SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@v5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: >
+            -Dsonar.organization=pandelig-1
+            -Dsonar.projectKey=pandelig_sast-sca-dast-ports-demo
+            -Dsonar.sources=vulnerable_flask_app
+
+      - name: SonarQube Quality Gate check
+        uses: sonarsource/sonarqube-quality-gate-action@v1
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+      - name: Run pip-audit
+        # This step will run even if the previous SonarQube Quality Gate check step fails
+        if: always()
+        run: |
+          pip install pip-audit
+          pip-audit -r vulnerable_flask_app/requirements.txt
